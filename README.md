@@ -1,2 +1,1 @@
-# crispy-funicular
-Bug destination fix for a robinhood and xrp
+run pip install aiohttp tqdm
