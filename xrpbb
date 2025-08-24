@@ -1,0 +1,73 @@
+import asyncio
+import aiohttp
+import json
+import time
+from multiprocessing import Pool, cpu_count
+from tqdm import tqdm
+
+NODE_URL = "https://s.altnet.rippletest.net:51234"
+
+async def fetch_account_transactions(session, address, marker=None, limit=200):
+    url = NODE_URL
+    payload = {
+        "method": "account_tx",
+        "params": [{
+            "account": address,
+            "limit": limit
+        }]
+    }
+    if marker:
+        payload["params"][0]["marker"] = marker
+
+    async with session.post(url, json=payload) as resp:
+        resp.raise_for_status()
+        return await resp.json()
+
+async def process_address(address, outfile, limit=200):
+    transactions = []
+    marker = None
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+        pbar = tqdm(desc=f"Address {address}", unit="tx")
+        while True:
+            try:
+                data = await fetch_account_transactions(session, address, marker, limit)
+                result = data['result']
+            except Exception as e:
+                print(f"Error for {address}: {e}")
+                await asyncio.sleep(2)
+                continue
+
+            for tx in result.get("transactions", []):
+                meta = tx.get("meta", {})
+                tx_data = tx.get("tx", {})
+                result_code = meta.get("TransactionResult", "")
+                has_memos = bool(tx_data.get("Memos"))
+                if tx_data.get("Destination") and (not result_code.startswith("tes") or not has_memos):
+                    transactions.append(tx)
+                    pbar.update(1)
+            marker = result.get("marker")
+            if not marker:
+                break
+        pbar.close()
+    with open(outfile, "w") as f:
+        json.dump(transactions, f, indent=2)
+    print(f"Finished {address}: {len(transactions)} transactions saved to {outfile}")
+
+def address_worker(args):
+    address, outfile = args
+    asyncio.run(process_address(address, outfile))
+
+def main(addresses):
+    # Each address gets its own file
+    args = [(addr, f"xrp_transactions_{addr}.json") for addr in addresses]
+    with Pool(min(cpu_count(), len(addresses))) as pool:
+        pool.map(address_worker, args)
+
+if __name__ == "__main__":
+    # Add as many addresses as needed
+    addresses = [
+        "rfMoiQEFrDEpqcnJhnLiSoZukuVbrDG87g",
+        # "another_XRPL_address",
+        # ...
+    ]
+    main(addresses)
